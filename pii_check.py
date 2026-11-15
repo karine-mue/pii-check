@@ -88,7 +88,9 @@ def is_jp_phone_number(value: object) -> bool:
             return False
         if cleaned.startswith(("050", "060", "070", "090")):
             return False
-        if cleaned.startswith("080") and not cleaned.startswith("0800"):
+        # 080 is an 11-digit prefix (mobile / 0800 toll-free); no 10-digit
+        # number starts with 080 in the Japanese numbering plan.
+        if cleaned.startswith("080"):
             return False
         return True
     return False

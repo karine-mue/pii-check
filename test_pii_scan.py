@@ -106,6 +106,100 @@ check("big verdict", rep_b["columns"]["individual_number"]["verdict"] == "pii"
 print(f"big scan elapsed: {elapsed:.1f}s for 200k rows")
 check("big scan under 120s", elapsed < 120)
 
+# --- review fixes (2026-11-15): JSON array streaming & error handling ---
+def _write_tmp(text, suffix):
+    with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False,
+                                     encoding="utf-8") as tf:
+        tf.write(text)
+        return tf.name
+
+def _raises_value_error(fn, path):
+    try:
+        fn(path)
+        return False
+    except ValueError:
+        return True
+    finally:
+        os.unlink(path)
+
+# truncated array (missing ']') must raise, not end silently
+p = _write_tmp('[{"a": "407925273107"}, {"a": "382218728553"}', ".json")
+check("json truncated raises", _raises_value_error(scan_json_array, p))
+# trailing comma must raise
+p = _write_tmp('[{"a": 1},]', ".json")
+check("json trailing comma raises", _raises_value_error(scan_json_array, p))
+# data after the closing bracket must raise
+p = _write_tmp('[{"a": 1}] xyz', ".json")
+check("json trailing data raises", _raises_value_error(scan_json_array, p))
+# empty input must raise
+p = _write_tmp('', ".json")
+check("json empty raises", _raises_value_error(scan_json_array, p))
+# a syntax error early in the file raises without needing EOF
+p = _write_tmp('[{"a": tru}, {"b": 2}]', ".json")
+check("json bad literal raises", _raises_value_error(scan_json_array, p))
+
+# reached_eof is exact when the record count equals the sample limit
+p = _write_tmp("\n".join(json.dumps({"a": "407925273107"}) for _ in range(5)) + "\n", ".jsonl")
+rep = scan_jsonl(p, sample_limit=5)
+os.unlink(p)
+check("jsonl exact limit eof", rep["rows_scanned"] == 5 and rep["reached_eof"] is True)
+p = _write_tmp(json.dumps([{"a": "407925273107"}] * 5), ".json")
+rep = scan_json_array(p, sample_limit=5)
+os.unlink(p)
+check("json exact limit eof", rep["rows_scanned"] == 5 and rep["reached_eof"] is True)
+
+# non-object JSONL records are skipped and counted, not fatal
+p = _write_tmp('{"a": "407925273107"}\n[1, 2]\n"str"\n{"a": "382218728553"}\n', ".jsonl")
+rep = scan_jsonl(p)
+os.unlink(p)
+check("jsonl non-object skipped", rep["rows_scanned"] == 4 and rep["skipped_non_object"] == 2
+      and rep["columns"]["a"]["matches"].get("my_number") == 2)
+# malformed JSONL line raises with the line number
+p = _write_tmp('{"a": 1}\n{bad}\n', ".jsonl")
+try:
+    scan_jsonl(p)
+    check("jsonl malformed raises", False)
+except ValueError as exc:
+    check("jsonl malformed raises", "line 2" in str(exc))
+finally:
+    os.unlink(p)
+
+# IMEI column: top_type must be imei, not credit_card (tie-break by specificity)
+def _luhn_complete(body):
+    s = 0
+    for i, ch in enumerate(reversed(body + "0")):
+        d = int(ch)
+        if i % 2 == 1:
+            d = d * 2 - 9 if d * 2 > 9 else d * 2
+        s += d
+    return body + str((10 - s % 10) % 10)
+
+imeis = [_luhn_complete(b) for b in ("49015420323751", "35693803564380", "85985806325661")]
+p = _write_tmp("\n".join(json.dumps({"device": v}) for v in imeis) + "\n", ".jsonl")
+rep = scan_jsonl(p)
+os.unlink(p)
+check("imei top_type", rep["columns"]["device"]["top_type"] == "imei"
+      and rep["columns"]["device"]["matches"].get("credit_card") == 3)
+
+# whitespace-only values count as empty, not as denominator
+p = _write_tmp('a,b\n" ",407925273107\n"  ",382218728553\n', ".csv")
+rep = scan_csv(p)
+os.unlink(p)
+check("whitespace-only is empty", rep["columns"]["a"]["empty"] == 2
+      and rep["columns"]["a"]["values_seen"] == 0)
+
+# duplicate CSV header names are an error, not a silent overwrite
+p = _write_tmp('a,a\n1,2\n', ".csv")
+check("csv duplicate header raises", _raises_value_error(scan_csv, p))
+
+# negative sample limits are rejected
+for fn in (scan_csv, scan_jsonl, scan_json_array):
+    try:
+        fn("nonexistent", sample_limit=-1)
+        check(f"{fn.__name__} negative sample raises", False)
+    except ValueError:
+        check(f"{fn.__name__} negative sample raises", True)
+
 print()
 if failures:
     print("FAILURES:", failures)
