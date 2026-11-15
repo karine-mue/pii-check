@@ -59,6 +59,40 @@ def is_imei(value: object) -> bool:
         return False
     return _luhn_valid(digits)
 
+def is_drivers_license(value: object) -> bool:
+    digits = _normalize(value)
+    if digits is None or len(digits) != 12:
+        return False
+    weights = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2]
+    total = 0
+    for i in range(10):
+        total += (ord(digits[i]) - 48) * weights[i]
+    expected = 11 - (total % 11)
+    if expected >= 10:
+        expected = 0
+    check_digit = ord(digits[10]) - 48
+    return check_digit == expected
+
+def is_jp_phone_number(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    cleaned = value.replace(" ", "").replace("-", "")
+    if cleaned.startswith("+81"):
+        cleaned = "0" + cleaned[3:]
+    if not cleaned or not cleaned.isascii() or not cleaned.isdigit():
+        return False
+    if len(cleaned) == 11:
+        return cleaned.startswith(("050", "060", "070", "080", "090"))
+    if len(cleaned) == 10:
+        if cleaned[0] != "0" or cleaned[1] == "0":
+            return False
+        if cleaned.startswith(("050", "060", "070", "090")):
+            return False
+        if cleaned.startswith("080") and not cleaned.startswith("0800"):
+            return False
+        return True
+    return False
+
 def classify(value: object) -> list[str]:
     if not isinstance(value, str):
         return []
@@ -71,4 +105,8 @@ def classify(value: object) -> list[str]:
         result.append("credit_card")
     if is_imei(value):
         result.append("imei")
+    if is_drivers_license(value):
+        result.append("drivers_license")
+    if is_jp_phone_number(value):
+        result.append("jp_phone")
     return result
