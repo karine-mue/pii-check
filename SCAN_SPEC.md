@@ -24,6 +24,13 @@ pii_check.py の単体検証を実務の形にする：「この CSV / JSON の�
 - CSV のヘッダに重複したカラム名がある場合は ValueError にする（黙って上書きしない）。
 - 空白のみの値は「空」として数える（`values_seen` の分母に入れない）。
 - `sample_limit` の負数はエラー。CLI の `--sample` も同様。
+- 空入力の扱いは形式ごとに異なる：JSON 配列は ValueError、CSV / JSONL は `rows_scanned=0`・`reached_eof=True` の正常終了とする。
+- CSV でヘッダより多いフィールドを持つ行は、超過分を捨てる（現行挙動）。不足分は空として数える。
+
+## 集計の詳細（2026-11-15 再レビューで明記）
+- `rows_scanned` は `skipped_non_object` の件数を含む（読み進めたレコード総数）。`sample_limit` の消費も同様。オブジェクト行だけの件数は `rows_scanned - skipped_non_object` で復元できる。
+- `top_type` が同点の場合は、定義の狭い種別を優先する。優先順は 個人番号 ＞ 法人番号 ＞ 運転免許証 ＞ IMEI ＞ クレジットカード ＞ 電話番号。根拠：15桁 Luhn の値は IMEI（15桁固定）とカード（13–19桁）の両方に一致するが、より限定的な定義を名乗るべきため。副作用として、15桁の Amex のカラムも `top_type=imei` と表示される（`matches` には両種別が残り、`verdict` は変わらない。ラベルのみの割り切り）。
+- `example_masked` は、生のセル値ではなく、`classify` が受理した区切り除去形（スペース・ハイフンを除いた形）に対してマスクを計算する。
 
 ## レポート（カラムごと）
 - `values_seen`（空でない値の数）、`empty`

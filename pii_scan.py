@@ -249,9 +249,10 @@ def _iter_json_array(f, chunk_size=CHUNK_SIZE):
     """Yield the elements of a top-level JSON array, streaming.
 
     The buffer is refilled only when the parser actually needs more input,
-    so memory stays bounded by the largest single element plus one chunk.
-    Truncated or malformed input raises ValueError; it never ends the
-    iteration silently.
+    so memory stays bounded by the largest single element plus the current
+    read size (which grows from chunk_size up to 1MiB while one element
+    spans many fills). Truncated or malformed input raises ValueError; it
+    never ends the iteration silently.
     """
     decoder = json.JSONDecoder()
     buf = ""
