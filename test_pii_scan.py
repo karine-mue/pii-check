@@ -101,8 +101,10 @@ rep_b = scan_csv(big_path, sample_limit=None)
 elapsed = time.time() - t0
 os.unlink(big_path)
 check("big rows", rep_b["rows_scanned"] == 200_000 and rep_b["reached_eof"] is True)
+# Row i=0 mints 000000000000, the all-zero dummy that is never a valid
+# identifier (2026-11-15 rule), so matches are 199,999 of 200,000.
 check("big verdict", rep_b["columns"]["individual_number"]["verdict"] == "pii"
-      and rep_b["columns"]["individual_number"]["matches"].get("my_number") == 200_000)
+      and rep_b["columns"]["individual_number"]["matches"].get("my_number") == 199_999)
 print(f"big scan elapsed: {elapsed:.1f}s for 200k rows")
 check("big scan under 120s", elapsed < 120)
 

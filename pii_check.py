@@ -4,6 +4,12 @@ def _normalize(value: object) -> str | None:
     cleaned = value.replace(" ", "").replace("-", "")
     if not cleaned or not cleaned.isascii() or not cleaned.isdigit():
         return None
+    if cleaned.strip("0") == "":
+        # All-zero strings satisfy several check-digit formulas (Luhn sum
+        # 0, My Number remainder 0, ...), but they are zero-filled dummy
+        # values, never assigned identifiers. Reject them uniformly here
+        # so every digit validator inherits the rule (SPEC 共通ルール).
+        return None
     return cleaned
 
 def _luhn_valid(digits: str) -> bool:

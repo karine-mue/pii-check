@@ -98,6 +98,15 @@ check("classify phone", "jp_phone" in classify("09012345678"))
 check("classify garbage", classify("hello") == [])
 check("classify corrupted", "my_number" not in classify(MY_NG[0]))
 
+# --- all-zero values are never valid identifiers (2026-11-15 review fix) ---
+check("zero my_number", not is_my_number("000000000000"))
+check("zero corporate", not is_corporate_number("0000000000000"))
+check("zero credit_card", not is_credit_card("0000000000000000"))
+check("zero imei", not is_imei("000000000000000"))
+check("zero drivers_license", not is_drivers_license("000000000000"))
+check("zero with separators", not is_my_number("0000-0000-0000"))
+check("zero classify empty", classify("000000000000") == [])
+
 print()
 if failures:
     print("FAILURES:", failures)
