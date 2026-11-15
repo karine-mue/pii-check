@@ -3,6 +3,13 @@
 チェックデジットや固定ルールで**機械的に検証できる識別子**の検証部品（Python、標準ライブラリのみ）。
 「この文字列はマイナンバーとして正しい形式か」を、毎回作り直したり LLM に聞いたりせずに判定するためのものです。
 
+ファイル単位で使いたい場合は `pii_scan.py`（後述）：CSV / JSON Lines / JSON 配列をカラムごとに走査して「このカラムに PII があるか」を報告します。GB〜TB 級を想定し、ストリーミング処理＋デフォルトで先頭10万件のサンプリングです。
+
+```sh
+python3 pii_scan.py data.csv                 # 要約を標準出力へ
+python3 pii_scan.py data.jsonl --full --json-out report.json
+```
+
 ## 使い方
 
 ```python
