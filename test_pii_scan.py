@@ -202,6 +202,40 @@ for fn in (scan_csv, scan_jsonl, scan_json_array):
     except ValueError:
         check(f"{fn.__name__} negative sample raises", True)
 
+# --- Argon re-review fixes (2026-11-15): chunk-boundary token splits ---
+import io as _io
+from pii_scan import _iter_json_array as _ija
+
+def _ija_run(text, chunk):
+    try:
+        return list(_ija(_io.StringIO(text), chunk_size=chunk))
+    except ValueError:
+        return None
+
+check("chunk split unicode escape", _ija_run('[{"a": "' + "x" * 20 + '\\u3042"}]', 16) is not None
+      and _ija_run('[{"a": "' + "x" * 20 + '\\u3042"}]', 30) is not None)
+check("chunk split literal", _ija_run('[{"a": true}]', 8) == [{"a": True}]
+      and _ija_run('[{"a": null}]', 8) == [{"a": None}])
+check("chunk split fraction", _ija_run('[123.45, 678]', 5) == [123.45, 678])
+check("chunk split exponent", _ija_run('[1e5, 2]', 3) == [100000.0, 2])
+check("chunk split negative", _ija_run('[-123, 5]', 2) == [-123, 5])
+check("chunk genuine error still raises", _ija_run('[{"a": tru}, {"b": 2}]', 65536) is None
+      and _ija_run('[{"a": 1}, {"b": @}]', 65536) is None)
+check("chunk malformed number raises", _ija_run('[123.x]', 65536) is None)
+
+# skipped non-objects must not inflate initial_empty of later columns
+p = _write_tmp('[1, 2]\n"s"\n{"a": "407925273107"}\n{"a": "382218728553", "b": "x"}\n', ".jsonl")
+rep = scan_jsonl(p)
+os.unlink(p)
+check("skipped rows not in initial_empty", rep["skipped_non_object"] == 2
+      and rep["columns"]["a"]["empty"] == 0 and rep["columns"]["b"]["empty"] == 1)
+
+# example_masked is computed over the separator-stripped identifier
+p = _write_tmp('{"n": "4079-2527-3107"}\n', ".jsonl")
+rep = scan_jsonl(p)
+os.unlink(p)
+check("example masked on stripped form", rep["columns"]["n"]["example_masked"] == "40********07")
+
 print()
 if failures:
     print("FAILURES:", failures)

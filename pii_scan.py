@@ -73,7 +73,10 @@ class _ColumnStats:
         for pii_type in classify(val):
             self.matches[pii_type] = self.matches.get(pii_type, 0) + 1
             if pii_type not in self.first_examples:
-                self.first_examples[pii_type] = val
+                # Keep the example in the separator-stripped form that
+                # classify actually matched, so masking is computed over
+                # the identifier itself, not over spaces/hyphens.
+                self.first_examples[pii_type] = val.replace(" ", "").replace("-", "")
 
     def to_report(self) -> dict:
         if not self.matches:
@@ -193,6 +196,7 @@ def scan_jsonl(path, sample_limit=DEFAULT_SAMPLE_LIMIT) -> dict:
         raise ValueError(f"sample_limit must be >= 0 or None, got {sample_limit}")
     columns = {}
     rows_scanned = 0
+    dict_rows = 0
     skipped_non_object = 0
     reached_eof = True
     with open(path, mode="r", encoding="utf-8-sig") as f:
@@ -228,7 +232,11 @@ def scan_jsonl(path, sample_limit=DEFAULT_SAMPLE_LIMIT) -> dict:
                     f"Invalid JSON on line {line_no} of {path}: {exc.msg}"
                 ) from exc
             if isinstance(record, dict):
-                _process_json_record(record, columns, rows_scanned)
+                # rows_prior counts object records only: skipped records
+                # must not inflate the initial empty count of a column
+                # that first appears later.
+                _process_json_record(record, columns, dict_rows)
+                dict_rows += 1
             else:
                 # Valid JSON but not an object: counted, not silently lost.
                 skipped_non_object += 1
@@ -249,13 +257,20 @@ def _iter_json_array(f, chunk_size=CHUNK_SIZE):
     buf = ""
     pos = 0
     eof = False
+    read_size = chunk_size
 
     def fill() -> bool:
-        """Append one chunk to the buffer. Returns False at EOF."""
-        nonlocal buf, pos, eof
+        """Append one chunk to the buffer. Returns False at EOF.
+
+        Consecutive fills (a single element spanning many chunks) read
+        progressively more, doubling up to 1MiB, so re-parsing the element
+        after each fill stays near-linear instead of quadratic.
+        """
+        nonlocal buf, pos, eof, read_size
         if eof:
             return False
-        chunk = f.read(chunk_size)
+        chunk = f.read(read_size)
+        read_size = min(read_size * 2, 1 << 20)
         if chunk == "":
             eof = True
             return False
@@ -282,29 +297,47 @@ def _iter_json_array(f, chunk_size=CHUNK_SIZE):
 
     def parse_element():
         """Parse one element starting at pos (a non-whitespace char)."""
-        nonlocal pos
+        nonlocal pos, read_size
+        last_token_len = -1
         while True:
             try:
                 obj, end = decoder.raw_decode(buf, pos)
             except json.JSONDecodeError as exc:
                 if eof:
                     raise ValueError(f"Invalid JSON array: {exc.msg}") from exc
-                # Retry with more input only when the failure can be caused
-                # by a truncated buffer: an unterminated string, or an error
-                # at the very end of what has been read so far. Anything
-                # else is a genuine syntax error; report it immediately.
-                if exc.msg.startswith("Unterminated string") or exc.pos >= len(buf):
+                # Retry with more input when the failure can be caused by
+                # a truncated buffer. Truncation failures point at or near
+                # the end of what has been read: an unterminated string, a
+                # literal cut in half ("tru"), a \u escape cut in half, a
+                # lone "-". A genuine syntax error sits well behind the
+                # buffer end (the parser had lookahead and still failed),
+                # so report those immediately.
+                if exc.msg.startswith("Unterminated string") or exc.pos > len(buf) - chunk_size:
                     if fill():
                         continue
                     raise ValueError(f"Invalid JSON array: {exc.msg}") from exc
                 raise ValueError(f"Invalid JSON array: {exc.msg}") from exc
-            if end == len(buf) and not eof:
-                # A scalar value may continue in the next chunk (e.g. a
-                # number split as 123|45). Refill and reparse to be sure
-                # the value is complete before yielding it.
-                if fill():
-                    continue
+            if not eof:
+                # A decoded scalar may still be truncated at the buffer
+                # edge: an integer can gain more digits, and a number can
+                # continue with "." or an exponent (raw_decode returns the
+                # shorter valid prefix, e.g. "123" for the cut "123.").
+                # Refill and reparse; stop when the token length no longer
+                # changes, which means the value is complete (or genuinely
+                # malformed, in which case the delimiter check will fail).
+                token_len = end - pos
+                may_continue = end == len(buf) or (
+                    isinstance(obj, (int, float))
+                    and not isinstance(obj, bool)
+                    and end < len(buf)
+                    and buf[end] in ".eE"
+                )
+                if may_continue and token_len != last_token_len:
+                    last_token_len = token_len
+                    if fill():
+                        continue
             pos = end
+            read_size = chunk_size
             return obj
 
     if peek() is None:
@@ -346,6 +379,7 @@ def scan_json_array(path, sample_limit=DEFAULT_SAMPLE_LIMIT) -> dict:
         raise ValueError(f"sample_limit must be >= 0 or None, got {sample_limit}")
     columns = {}
     rows_scanned = 0
+    dict_rows = 0
     skipped_non_object = 0
     reached_eof = True
     with open(path, mode="r", encoding="utf-8-sig") as f:
@@ -364,7 +398,8 @@ def scan_json_array(path, sample_limit=DEFAULT_SAMPLE_LIMIT) -> dict:
                 reached_eof = True
                 break
             if isinstance(record, dict):
-                _process_json_record(record, columns, rows_scanned)
+                _process_json_record(record, columns, dict_rows)
+                dict_rows += 1
             else:
                 skipped_non_object += 1
             rows_scanned += 1
