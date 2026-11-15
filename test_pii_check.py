@@ -5,7 +5,8 @@ Card numbers 4242.../3782... are public industry test numbers, not real cards.
 import sys
 
 sys.path.insert(0, ".")
-from pii_check import is_my_number, is_corporate_number, is_credit_card, is_imei, classify
+from pii_check import (is_my_number, is_corporate_number, is_credit_card, is_imei,
+                       is_drivers_license, is_jp_phone_number, classify)
 
 failures = []
 
@@ -58,11 +59,41 @@ check("empty rejected", not is_my_number("") and not is_credit_card(""))
 check("none input", is_my_number(None) is False and classify(None) == [])
 check("int input", is_credit_card(4242424242424242) is False)
 
+# --- driver's license (check digit at position 11; weights 5,4,3,2,7,6,5,4,3,2) ---
+LIC_OK = ["407925273120", "038221872840", "552575280990"]
+LIC_NG = ["407925273130", "038221872850", "552575280900"]
+check("license valid", all(is_drivers_license(v) for v in LIC_OK))
+check("license invalid", not any(is_drivers_license(v) for v in LIC_NG))
+check("license 11 digits", not is_drivers_license("40792527312"))
+check("license worked example", is_drivers_license("122345678940"))  # body 1223456789 -> check 4, reissue 0
+
+# --- Japanese phone numbers (format tier, no check digit) ---
+check("phone mobile 090", is_jp_phone_number("09012345678"))
+check("phone mobile hyphens", is_jp_phone_number("080-1234-5678"))
+check("phone mobile 070", is_jp_phone_number("07012345678"))
+check("phone ip 050", is_jp_phone_number("05012345678"))
+check("phone +81 form", is_jp_phone_number("+819012345678"))
+check("phone landline tokyo", is_jp_phone_number("0312345678"))
+check("phone landline 4digit area", is_jp_phone_number("0467123456"))
+check("phone tollfree 0120", is_jp_phone_number("0120123456"))
+check("phone tollfree 0800", is_jp_phone_number("0800123456"))
+check("phone navi 0570", is_jp_phone_number("0570123456"))
+check("phone 10digit mobile prefix", not is_jp_phone_number("0901234567"))
+check("phone 10digit 050", not is_jp_phone_number("0501234567"))
+check("phone 10digit 080 not 0800", not is_jp_phone_number("0801123456"))
+check("phone no leading zero", not is_jp_phone_number("1234567890"))
+check("phone 00 start", not is_jp_phone_number("0012345678"))
+check("phone 12 digits", not is_jp_phone_number("090123456789"))
+check("phone special 110", not is_jp_phone_number("110"))
+check("phone none input", is_jp_phone_number(None) is False)
+
 # --- classify ---
 check("classify my_number", "my_number" in classify(MY_OK[0]))
 check("classify corporate", "corporate_number" in classify(CO_OK[0]))
 check("classify card", "credit_card" in classify("4242424242424242"))
 check("classify imei", "imei" in classify(IMEI_OK[0]))
+check("classify license", "drivers_license" in classify(LIC_OK[0]))
+check("classify phone", "jp_phone" in classify("09012345678"))
 check("classify garbage", classify("hello") == [])
 check("classify corrupted", "my_number" not in classify(MY_NG[0]))
 
